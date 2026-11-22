@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ZyxelRoot/ZyxelRoot.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/ZyxelRoot.Smoke/ZyxelRoot.Smoke.csproj" />
+    <Project Path="samples/ZyxelRoot.Kick/ZyxelRoot.Kick.csproj" />
+    <Project Path="samples/ZyxelRoot.CronGuard/ZyxelRoot.CronGuard.csproj" />
+    <Project Path="samples/ZyxelRoot.Sample.Full/ZyxelRoot.Sample.Full.csproj" />
+  </Folder>
+</Solution>
