@@ -20,7 +20,8 @@ namespace ZyxelRoot.Smoke;
 ///    (skipped when <c>--sms</c> is used without an explicit <c>--seconds</c>),
 /// 6. on demand (<c>--kick [seconds]</c>): a <c>KickMonitor</c> A/B capture
 ///    (raw-URC tap + 5 s AT poll + filtered log tails) for the given seconds.
-/// On demand: <c>--watch [seconds]</c> (PersistentRootShell keep-alive) and
+/// On demand: <c>--root-ssh</c> (direct root SSH login test),
+/// <c>--watch [seconds]</c> (PersistentRootShell keep-alive) and
 /// <c>--selftest-reboot</c> (pure reboot rule, no router).
 /// </summary>
 internal static class Program
@@ -119,6 +120,13 @@ internal static class Program
             watchArg is not null and not "false" and not "0")
             watchSeconds = watchArg is "true" ? 60 : int.Parse(watchArg);
 
+        // --root-ssh: direct root SSH login test (Zyxel:RootPassword) —
+        // connect, verify uid=0, run id/uname, exit. Explicit; never run
+        // by default.
+        bool rootSsh = flag("root-ssh");
+        if (args.TryGetValue("root-user", out string? rootUser) && rootUser is not null) settings.RootUsername = rootUser;
+        if (args.TryGetValue("root-password", out string? rootPass) && rootPass is not null) settings.RootPassword = rootPass;
+
         // With --sms/--sms-long the point is the SMS round trip; only keep the
         // (slow) AT monitor when the caller asked for it explicitly.
         bool runMonitor = !(smsNumber is not null || smsLongNumber is not null) || args.ContainsKey("seconds");
@@ -140,6 +148,9 @@ internal static class Program
 
         if (watchSeconds is not null)
             return await RunWatchAsync(settings, watchSeconds.Value, cts.Token, Log);
+
+        if (rootSsh)
+            return await RunRootSshAsync(settings, cts.Token);
 
         // ---------------------------------------------------------- connect
         var connectWatch = Stopwatch.StartNew();
@@ -460,6 +471,24 @@ internal static class Program
         }
     }
 
+    private static async Task<int> RunRootSshAsync(ZyxelSettings settings, CancellationToken ct)
+    {
+        Console.WriteLine($"--- Direct root SSH: {settings.RootUsername}@{settings.Host}:{settings.SshPort} ---");
+        if (string.IsNullOrEmpty(settings.RootPassword))
+        {
+            Console.Error.WriteLine("settings: Zyxel:RootPassword is empty (direct root SSH not configured)");
+            return 2;
+        }
+
+        var watch = Stopwatch.StartNew();
+        using SshRootShell shell = await SshRootShell.OpenAsync(settings, Console.Error.WriteLine, TimeSpan.FromSeconds(20), ct);
+        Console.WriteLine($"connected in {watch.ElapsedMilliseconds} ms (uid=0 verified)");
+
+        await VerifyAsync(shell, "id");
+        await VerifyAsync(shell, "uname -a");
+        return 0;
+    }
+
     private static int RunRebootRuleSelfTest()
     {
         Console.WriteLine("--- RebootDetection rule (pure; no router needed) ---");
@@ -489,7 +518,7 @@ internal static class Program
         return ok ? 0 : 1;
     }
 
-    private static async Task VerifyAsync(RootShell shell, string command)
+    private static async Task VerifyAsync(MarkerShell shell, string command)
     {
         var watch = Stopwatch.StartNew();
         CommandResult result = await shell.RunAsync(command, TimeSpan.FromSeconds(15));

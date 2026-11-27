@@ -28,6 +28,21 @@ public sealed class ZyxelSettings
     public string? WebPassword { get; set; }
 
     /// <summary>
+    /// SSH user name for the direct root login (config key
+    /// <c>Zyxel:RootUsername</c>; default "root").
+    /// </summary>
+    public string RootUsername { get; set; } = "root";
+
+    /// <summary>
+    /// Password for the direct root SSH login (config key
+    /// <c>Zyxel:RootPassword</c>). When set, <see cref="PersistentRootShell"/>
+    /// connects straight over SSH as root — no daemon, no breakout — and falls
+    /// back to the root-telnetd bootstrap path only when this login fails
+    /// (e.g. firmware without the root account).
+    /// </summary>
+    public string RootPassword { get; set; } = "";
+
+    /// <summary>
     /// ZySH breakout payload (config key <c>Zyxel:Exploit</c>).
     /// Loaded from the configuration — there is deliberately no built-in default.
     /// </summary>
@@ -128,6 +143,10 @@ public sealed class ZyxelSettings
                         payload[member.Name] = member.Value.Clone();
                     settings.DalPayload = payload;
                 }
+                if (z.TryGetProperty("RootUsername", out v) && v.ValueKind == JsonValueKind.String)
+                    settings.RootUsername = v.GetString()!;
+                if (z.TryGetProperty("RootPassword", out v) && v.ValueKind == JsonValueKind.String)
+                    settings.RootPassword = v.GetString()!;
             }
             settings.ConfigPath = path;
         }
@@ -158,6 +177,12 @@ public sealed class ZyxelSettings
 
         var rootPort = Environment.GetEnvironmentVariable("ZYXEL_ROOT_PORT");
         if (!string.IsNullOrEmpty(rootPort) && int.TryParse(rootPort, out var rp)) RootPort = rp;
+
+        var rootUser = Environment.GetEnvironmentVariable("ZYXEL_ROOT_USER");
+        if (!string.IsNullOrEmpty(rootUser)) RootUsername = rootUser;
+
+        var rootPass = Environment.GetEnvironmentVariable("ZYXEL_ROOT_PASS");
+        if (!string.IsNullOrEmpty(rootPass)) RootPassword = rootPass;
 
         return this;
     }

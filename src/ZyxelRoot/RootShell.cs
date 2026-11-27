@@ -34,12 +34,6 @@ public sealed class RootShell : MarkerShell, IAsyncDisposable
     public int Port { get; private init; }
 
     /// <summary>
-    /// True after the transport closed (peer reset, router reboot, local
-    /// <see cref="Dispose"/>). A reconnect is required.
-    /// </summary>
-    public bool IsClosed => IsDisposed;
-
-    /// <summary>
     /// Opens a connection to the root telnetd. Throws
     /// <see cref="ZyxelRootException"/> when the port is not accepting.
     /// </summary>

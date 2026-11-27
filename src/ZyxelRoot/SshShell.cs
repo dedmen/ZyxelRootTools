@@ -5,26 +5,52 @@ namespace ZyxelRoot;
 
 /// <summary>
 /// An SSH pty on the router speaking the marker protocol. Shared transport
-/// for <see cref="SshAdminShell"/> (admin, uid 21) and the <c>debug</c>
-/// root login.
+/// for the password logins: <see cref="SshAdminShell"/> (admin, uid 21),
+/// the <c>debug</c> root bootstrap login, and <see cref="SshRootShell"/>
+/// (direct root login on patched firmware).
 /// </summary>
-internal class SshShell : MarkerShell
+public class SshShell : MarkerShell
 {
     private readonly SshClient _client;
     private readonly ShellStream _stream;
     private readonly Thread _reader;
+    private readonly Thread _closeWatch;
 
     protected SshShell(SshClient client, ShellStream stream)
         : base(enableLineStream: false)
     {
         _client = client;
         _stream = stream;
+
+        // The transport's verdict is the authoritative close signal (killed
+        // session, reboot, LAN drop). The read loop cannot see it: a pending
+        // blocking Read on the shell stream is NOT woken when the transport
+        // dies (verified live: IsClosed stayed false 50 s after the session
+        // was SIGKILLed, while the client's IsConnected flipped ~8 s after
+        // the kill). Session/ConnectionLost are internal in SSH.NET
+        // 2026.0.0, so a watcher polls the public IsConnected instead.
+        _closeWatch = new Thread(CloseWatch)
+        {
+            IsBackground = true,
+            Name = "ZyxelRoot.SshCloseWatch"
+        };
+        _closeWatch.Start();
+
         _reader = new Thread(ReadLoop)
         {
             IsBackground = true,
             Name = "ZyxelRoot.SshPty"
         };
         _reader.Start();
+    }
+
+    private void CloseWatch()
+    {
+        while (!IsDisposed && _client.IsConnected)
+            Thread.Sleep(1000);
+
+        if (!IsDisposed)
+            MarkClosed();
     }
 
     /// <summary>
@@ -50,7 +76,14 @@ internal class SshShell : MarkerShell
             Timeout = timeout ?? TimeSpan.FromSeconds(15)
         };
 
-        var client = new SshClient(connection);
+        var client = new SshClient(connection)
+        {
+            // Detects a half-open connection (dark reboot without a reset):
+            // without it a dead peer is only noticed after the TCP
+            // retransmission timeout (~15 min).
+            KeepAliveInterval = TimeSpan.FromSeconds(15)
+        };
+
         try
         {
             client.Connect();
@@ -106,16 +139,14 @@ internal class SshShell : MarkerShell
         {
             while (!IsDisposed)
             {
-                if (_stream.DataAvailable)
-                {
-                    int read = _stream.Read(buffer, 0, buffer.Length);
-                    if (read <= 0) break;
-                    Feed(buffer.AsSpan(0, read));
-                }
-                else
-                {
-                    Thread.Sleep(10);
-                }
+                // Blocking read on this dedicated thread: it returns as soon
+                // as data arrives AND it is the only path that surfaces a
+                // closed stream (DataAvailable polling alone never sees a
+                // peer that closed without pending data — a killed session
+                // sat undetected forever).
+                int read = _stream.Read(buffer, 0, buffer.Length);
+                if (read <= 0) break;
+                Feed(buffer.AsSpan(0, read));
             }
         }
         catch

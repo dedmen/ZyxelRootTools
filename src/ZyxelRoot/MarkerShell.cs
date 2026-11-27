@@ -58,6 +58,12 @@ public abstract class MarkerShell : IDisposable, ICommandRunner, IInterruptibleS
 
     protected bool IsDisposed => _disposed;
 
+    /// <summary>
+    /// True after the transport closed (peer reset, router reboot, local
+    /// <see cref="Dispose"/>). A reconnect is required.
+    /// </summary>
+    public bool IsClosed => IsDisposed;
+
     protected abstract Task SendRawAsync(string text, CancellationToken ct);
 
     /// <inheritdoc/>

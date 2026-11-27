@@ -9,8 +9,12 @@ stream.
 * **Root shell** — a root shell over the router's `telnetd`
   (unauthenticated, LAN-only), with a marker protocol that keeps command
   output exact despite the pty echo.
+* **Direct root SSH** (`SshRootShell`) — a plain password login as `root`
+  on firmware builds with the root account enabled; no daemon, no breakout.
 * **Persistent root shell** — the same shell, kept alive across daemon
-  restarts and router reboots, with a `RouterRebooted` event.
+  restarts and router reboots, with a `RouterRebooted` event. Prefers direct
+  root SSH when `Zyxel:RootPassword` is set and falls back to the `telnetd`
+  path when the login is not available.
 * **Daemon bootstrap** (`RootDaemonManager`) — starts the root `telnetd`
   daemon. Primary path: the configured shell-escape exploit plus the
   vendor's `debug` feature to gain a root login. Fallback: a configured
@@ -37,6 +41,7 @@ ZyxelRoot/
     RootDaemonManager.cs         starts the daemon: debug-SSH bootstrap, web fallback
     DebugBootstrap.cs            `debug`-account arm (DAAS seed) + root SSH login
     SshShell.cs                  shared SSH pty transport (marker protocol)
+    SshRootShell.cs              direct root SSH login (uid=0 verified)
     SshAdminShell.cs             admin SSH shell + ZySH breakout
     WebDalClient.cs              ZCFG web login + configured DAL root injection
     MarkerShell.cs               marker protocol, rolling buffer, line stream
@@ -90,6 +95,7 @@ Smoke-test options:
 | `--trigger` / `--no-trigger` | run read-only `cmctl get moduleInfo` / `apnInfo 1` while capturing |
 | `--verbose` | per-record output + exception stacks |
 | `--watch N` | `PersistentRootShell` keep-alive: connect once, run `id`, then just wait N s — drops, re-bootstrap and (only on a real reboot) `RouterRebooted` are handled inside the library |
+| `--root-ssh` | direct root SSH login test (`--root-user`/`--root-password` overrides): connect, verify `uid=0`, run `id`/`uname -a`, exit |
 | `--selftest-reboot` | run the pure reboot rule on fixed cases and exit (no router needed) |
 
 ## 3. Configuration
@@ -109,7 +115,9 @@ an appsettings.json.
     "DalOid": "<DAL object id>",                  // root-injection target
     "DalCommandField": "<command field>",         // carries the injected command
     "DalCommandWrap": "<wrapping, {0}=command>",  // applied to the command
-    "DalPayload": { "...": "…" }                  // base payload template (JSON object)
+    "DalPayload": { "...": "…" },                 // base payload template (JSON object)
+    "RootUsername": "root",                       // direct root SSH user (optional)
+    "RootPassword": "..."                         // direct root SSH password (optional)
   }
 }
 ```
@@ -117,7 +125,13 @@ an appsettings.json.
 Default config file: `appsettings.json` in the current directory
 (override with `ZYXEL_CONFIG` or the `--config` argument). Environment
 variables: `ZYXEL_HOST`, `ZYXEL_PORT`, `ZYXEL_USER`, `ZYXEL_PASS`,
-`ZYXEL_EXPLOIT`, `ZYXEL_ROOT_PORT`, `ZYXEL_CONFIG`.
+`ZYXEL_EXPLOIT`, `ZYXEL_ROOT_PORT`, `ZYXEL_ROOT_USER`, `ZYXEL_ROOT_PASS`,
+`ZYXEL_CONFIG`.
+
+`RootPassword` is optional. When set, `PersistentRootShell` (and nothing
+else) connects straight over SSH as `root` — no daemon, no breakout — and
+falls back to the root `telnetd` path whenever that login fails. On
+firmware without the root account it simply never engages.
 
 The breakout and injection values are **secret by design and are loaded only
 from the config file** — none of `Exploit`, `ExploitConfirm`, `DalOid`,
@@ -502,6 +516,14 @@ For long-lived monitoring processes: connect once, keep calling `RunAsync` —
 daemon restarts and router reboots are handled inside the library. When the
 connection drops, the shell reconnects (re-bootstrapping the daemon when the
 box is up but the daemon is gone) and `RunAsync` callers simply wait.
+
+Two transports: when `Zyxel:RootPassword` is set the shell connects straight
+over SSH as `root` (`Transport.Ssh`, no daemon) and prefers it on every
+reconnect; if that login fails (firmware without the root account, wrong
+password, …) it falls back to the root `telnetd` transport (`Transport.Telnet`).
+`CurrentTransport` reports which one is live. The SSH transport keeps a 15 s
+keep-alive so a dead peer is noticed sooner than the TCP retransmission
+timeout (~15 min).
 
 After every reconnect it compares the box's `/proc/uptime` against the time
 elapsed since the first connect; when the uptime proves the box restarted in
